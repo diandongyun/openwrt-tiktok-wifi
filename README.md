@@ -21,5 +21,5 @@
 
 # Hysteria2+UDP+TLS+Obfuscation搭建协议
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/diandongyun/node/main/hysteria2.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/diandongyun/openwrt-tiktok-wifi/main/openwrt-tiktok-wifi.sh)
 ```  
