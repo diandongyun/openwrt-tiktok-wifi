@@ -20,12 +20,8 @@
 
 
 # passwall创建tiktok运行环境
+
 ```
-wget -O /tmp/openwrt-tiktok-wifi.sh https://cdn.jsdelivr.net/gh/diandongyun/openwrt-tiktok-wifi/openwrt-tiktok-wifi.sh
+wget -O /tmp/openwrt-tiktok-wifi.sh https://cdn.jsdelivr.net/gh/diandongyun/openwrt-tiktok-wifi/openwrt-tiktok-wifi.sh && chmod +x /tmp/openwrt-tiktok-wifi.sh && bash /tmp/openwrt-tiktok-wifi.sh
 ```  
-```
-chmod +x /tmp/openwrt-tiktok-wifi.sh
-```  
-```
-bash /tmp/openwrt-tiktok-wifi.sh
-```  
+
