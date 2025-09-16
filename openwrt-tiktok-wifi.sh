@@ -164,6 +164,8 @@ uci set wireless.@wifi-iface[-1].encryption='psk2+ccmp'
 uci set wireless.@wifi-iface[-1].key="${PASSWORD}"
 uci set wireless.@wifi-iface[-1].isolate='1'  # 客户端隔离
 uci set wireless.@wifi-iface[-1].disabled='0'
+# 确保WiFi接口配置正确，避免"无线未关联"问题
+uci set wireless.@wifi-iface[-1].ifname="wlan${INTERFACE_NAME}"  # 设置接口名称
 
 # 设置5G特定参数
 uci set wireless.@wifi-iface[-1].ieee80211w='1'  # 启用管理帧保护
@@ -237,6 +239,15 @@ if uci get passwall >/dev/null 2>&1; then
     uci delete passwall.@global[0].udp_node 2>/dev/null
     echo "  ✓ 已关闭UDP节点"
     
+    # 创建本地直连节点（避免无网络问题）
+    LOCAL_NODE_ID="local_direct_$(date +%s | tail -c 6)"
+    uci set passwall.${LOCAL_NODE_ID}=nodes
+    uci set passwall.${LOCAL_NODE_ID}.protocol='_direct'
+    uci set passwall.${LOCAL_NODE_ID}.type='_direct'
+    uci set passwall.${LOCAL_NODE_ID}.remarks='本地直连节点（无代理）'
+    uci set passwall.${LOCAL_NODE_ID}.add_from='脚本生成'
+    echo "  ✓ 已创建本地直连节点: ${LOCAL_NODE_ID}（确保网络可用）"
+
     # 创建虚拟TCP节点（用户需手动更换为有效节点）
     VIRTUAL_NODE_ID="virtual_tiktok_$(date +%s | tail -c 6)"
     uci set passwall.${VIRTUAL_NODE_ID}=nodes
@@ -253,7 +264,8 @@ if uci get passwall >/dev/null 2>&1; then
     uci set passwall.${VIRTUAL_NODE_ID}.fingerprint='chrome'
     uci set passwall.${VIRTUAL_NODE_ID}.tls='1'
     uci set passwall.${VIRTUAL_NODE_ID}.tls_serverName='www.example.com'
-    uci set passwall.${VIRTUAL_NODE_ID}.address='127.0.0.1'
+    # 修改：使用网关地址而非127.0.0.1，确保路由可达
+    uci set passwall.${VIRTUAL_NODE_ID}.address='192.168.1.1'
     uci set passwall.${VIRTUAL_NODE_ID}.uuid='12345678-1234-5678-9012-123456789012'
     uci set passwall.${VIRTUAL_NODE_ID}.encryption='none'
     uci set passwall.${VIRTUAL_NODE_ID}.transport='tcp'
@@ -279,7 +291,14 @@ if uci get passwall >/dev/null 2>&1; then
     uci set passwall.@global[0].localhost_proxy='1'     # 本地代理
     uci set passwall.@global[0].client_proxy='1'        # 客户端代理
     uci set passwall.@global[0].acl_enable='1'          # 启用访问控制
+
+    # 禁用节点连通性检测（避免因检测失败影响网络）
+    uci set passwall.@global[0].node_ping='0'           # 禁用节点ping检测
+    uci set passwall.@global[0].auto_ping='0'           # 禁用自动ping
+    uci set passwall.@global[0].tcp_node_ping='0'       # 禁用TCP节点ping
+    uci set passwall.@global[0].udp_node_ping='0'       # 禁用UDP节点ping
     echo "  ✓ 已优化全局DNS和代理设置"
+    echo "  ✓ 已禁用节点连通性检测（避免因检测失败影响网络）"
     
     # 添加访问控制规则
     uci add passwall acl_rule > /dev/null
@@ -295,7 +314,8 @@ if uci get passwall >/dev/null 2>&1; then
     uci set passwall.@acl_rule[${ACL_INDEX}].remote_dns='8.8.8.8'
     uci set passwall.@acl_rule[${ACL_INDEX}].dns_forward='8.8.4.4'
     uci set passwall.@acl_rule[${ACL_INDEX}].use_global_config='0'
-    uci set passwall.@acl_rule[${ACL_INDEX}].tcp_node="${VIRTUAL_NODE_ID}"
+    # 默认使用本地直连节点确保网络可用，用户可手动更换为有效代理节点
+    uci set passwall.@acl_rule[${ACL_INDEX}].tcp_node="${LOCAL_NODE_ID}"
     uci set passwall.@acl_rule[${ACL_INDEX}].use_direct_list='0'
     uci set passwall.@acl_rule[${ACL_INDEX}].use_proxy_list='0'
     uci set passwall.@acl_rule[${ACL_INDEX}].use_block_list='0'
@@ -316,7 +336,8 @@ if uci get passwall >/dev/null 2>&1; then
     echo "  源接口: 所有"
     echo "  源地址: 192.168.${SUBNET}.0/24"
     echo "  DNS模式: dns2socks (8.8.8.8/8.8.4.4)"
-    echo "  节点: ${VIRTUAL_NODE_ID}（请手动更换有效节点）"
+    echo "  默认节点: ${LOCAL_NODE_ID}（本地直连，确保网络可用）"
+    echo "  备用节点: ${VIRTUAL_NODE_ID}（请手动更换为有效代理节点）"
     echo "  端口转发: TCP(22,25,53,143,465,587,853,993,995,80,443) UDP(1:65535)"
 else
     echo "  警告: 未检测到passwall，跳过TikTok优化配置"
@@ -379,7 +400,8 @@ echo "网关: 192.168.${SUBNET}.1"
 echo "DHCP范围: 192.168.${SUBNET}.100 - 192.168.${SUBNET}.249"
 echo "防火墙区域: ${INTERFACE_NAME}_zone"
 echo "Passwall规则: ${WIFI_NAME}_TikTok专用"
-echo "Passwall绑定接口: ${INTERFACE_NAME}"
+echo "Passwall默认节点: 本地直连（确保网络正常）"
+echo "Passwall备用节点: 虚拟代理节点（请手动更换）"
 echo "最大连接数: ${MAX_DEVICES_PER_WIFI}个设备"
 echo "TikTok优化: DNS劫持防护、流量优化"
 echo "======================================"
@@ -396,4 +418,7 @@ echo "2. 每个WiFi支持最多${MAX_DEVICES_PER_WIFI}台设备同时连接"
 echo "3. 已配置DNS劫持防护和流量优化"
 echo "4. 各WiFi网段间完全隔离，确保安全性"
 echo "5. PassWall已配置TikTok专用代理规则"
+echo "6. 默认使用本地直连节点，网络正常可用"
+echo "7. 已禁用节点连通性检测，避免检测失败影响网络"
+echo "8. 请在PassWall访问控制中手动更换为有效代理节点"
 echo -e "\033[1;31;1m*本脚本由点动云独家提供，禁止出售或用于非法用途，脚本仅供技术交流学习使用\033[0m"
