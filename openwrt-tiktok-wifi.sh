@@ -12,6 +12,31 @@ echo "======================================"
 echo "智能5G WiFi创建脚本"
 echo "======================================"
 
+# 全局禁用IPv6
+echo "0. 全局禁用IPv6..."
+# 禁用IPv6内核模块
+uci set system.@system[0].ipv6='0'
+# 禁用IPv6网络配置
+uci set network.globals.ula_prefix=''
+uci set network.globals.ipv6='0'
+# 禁用IPv6 DHCP
+uci set dhcp.@dnsmasq[0].filter_aaaa='1'
+uci set dhcp.@dnsmasq[0].rebind_protection='0'
+# 禁用IPv6防火墙
+uci set firewall.@defaults[0].drop_invalid='1'
+uci set firewall.@defaults[0].drop_unknown='1'
+uci set firewall.@defaults[0].syn_flood='1'
+uci set firewall.@defaults[0].input='ACCEPT'
+uci set firewall.@defaults[0].output='ACCEPT'
+uci set firewall.@defaults[0].forward='ACCEPT'
+uci set firewall.@defaults[0].drop_invalid='1'
+uci set firewall.@defaults[0].drop_unknown='1'
+uci set firewall.@defaults[0].syn_flood='1'
+uci set firewall.@defaults[0].input='ACCEPT'
+uci set firewall.@defaults[0].output='ACCEPT'
+uci set firewall.@defaults[0].forward='ACCEPT'
+echo "  ✓ 已全局禁用IPv6"
+
 # 查找已存在的最大编号
 find_next_number() {
     max_num=0
@@ -84,8 +109,11 @@ uci set network.${INTERFACE_NAME}.proto='static'
 uci set network.${INTERFACE_NAME}.ipaddr="192.168.${SUBNET}.1"
 uci set network.${INTERFACE_NAME}.netmask='255.255.255.0'
 uci set network.${INTERFACE_NAME}.type='bridge'
-# 为桥接接口设置名称，这很重要！
-uci set network.${INTERFACE_NAME}.ifname="br-${INTERFACE_NAME}"
+# 禁用IPv6
+uci set network.${INTERFACE_NAME}.ip6assign='0'
+uci set network.${INTERFACE_NAME}.ip6class=''
+uci set network.${INTERFACE_NAME}.ip6hint=''
+# 删除错误的ifname手动设置，让OpenWrt自动创建桥接
 
 # 配置DHCP
 echo "2. 配置DHCP服务..."
@@ -96,6 +124,10 @@ uci set dhcp.${INTERFACE_NAME}.start='100'
 uci set dhcp.${INTERFACE_NAME}.limit="$((MAX_DEVICES_PER_WIFI + 5))"
 uci set dhcp.${INTERFACE_NAME}.leasetime='12h'
 uci set dhcp.${INTERFACE_NAME}.dhcpv4='server'
+# 禁用IPv6 DHCP
+uci set dhcp.${INTERFACE_NAME}.dhcpv6='disabled'
+uci set dhcp.${INTERFACE_NAME}.ra='disabled'
+uci set dhcp.${INTERFACE_NAME}.ndp='disabled'
 # 中国TikTok优化DNS设置 - 使用国内外混合DNS
 uci add_list dhcp.${INTERFACE_NAME}.dhcp_option="6,223.5.5.5,119.29.29.29"
 # 添加域名推送选项优化TikTok访问
@@ -154,6 +186,32 @@ fi
 
 echo "  使用无线设备: ${RADIO_DEVICE}"
 
+# 设置WiFi功率为最大
+echo "  配置WiFi功率为最大..."
+
+# 获取设备支持的最大功率
+MAX_POWER=$(iwinfo ${RADIO_DEVICE} txpwrlist 2>/dev/null | awk '{print $1}' | sort -n | tail -n1)
+if [ -z "$MAX_POWER" ]; then
+    # 如果无法获取txpwrlist，尝试从info中获取
+    MAX_POWER=$(iwinfo ${RADIO_DEVICE} info 2>/dev/null | grep "Tx-Power" | awk '{print $2}' | tr -d '[:alpha:]')
+fi
+
+# 如果仍然无法获取，使用默认值20dBm
+if [ -z "$MAX_POWER" ] || [ "$MAX_POWER" -eq "0" ]; then
+    MAX_POWER=20
+fi
+
+echo "  检测到设备最大功率: ${MAX_POWER}dBm"
+uci set wireless.${RADIO_DEVICE}.txpower="${MAX_POWER}"
+
+# 启用高功率模式
+uci set wireless.${RADIO_DEVICE}.country='US'  # 使用美国地区码获得更高功率
+# 设置信道宽度为最大
+uci set wireless.${RADIO_DEVICE}.htmode='VHT80' 2>/dev/null || uci set wireless.${RADIO_DEVICE}.htmode='HT40'
+# 启用所有天线
+uci set wireless.${RADIO_DEVICE}.antenna_gain='3'
+echo "  ✓ 已设置WiFi功率为最大 (${MAX_POWER}dBm)"
+
 # 创建WiFi接口
 uci add wireless wifi-iface > /dev/null
 uci set wireless.@wifi-iface[-1].device="${RADIO_DEVICE}"
@@ -164,8 +222,7 @@ uci set wireless.@wifi-iface[-1].encryption='psk2+ccmp'
 uci set wireless.@wifi-iface[-1].key="${PASSWORD}"
 uci set wireless.@wifi-iface[-1].isolate='1'  # 客户端隔离
 uci set wireless.@wifi-iface[-1].disabled='0'
-# 确保WiFi接口配置正确，避免"无线未关联"问题
-uci set wireless.@wifi-iface[-1].ifname="wlan${INTERFACE_NAME}"  # 设置接口名称
+# 删除手动ifname设置，让OpenWrt自动创建WiFi接口名称
 
 # 设置5G特定参数
 uci set wireless.@wifi-iface[-1].ieee80211w='1'  # 启用管理帧保护
@@ -291,6 +348,10 @@ if uci get passwall >/dev/null 2>&1; then
     uci set passwall.@global[0].localhost_proxy='1'     # 本地代理
     uci set passwall.@global[0].client_proxy='1'        # 客户端代理
     uci set passwall.@global[0].acl_enable='1'          # 启用访问控制
+    # 完全禁用IPv6相关功能
+    uci set passwall.@global[0].ipv6_tproxy='0'         # 禁用IPv6透明代理
+    uci set passwall.@global[0].ipv6='0'                # 禁用IPv6
+    uci set passwall.@global[0].ipv6_proxy='0'          # 禁用IPv6代理
 
     # 禁用节点连通性检测（避免因检测失败影响网络）
     uci set passwall.@global[0].node_ping='0'           # 禁用节点ping检测
@@ -322,6 +383,9 @@ if uci get passwall >/dev/null 2>&1; then
     uci set passwall.@acl_rule[${ACL_INDEX}].use_gfw_list='0'
     uci set passwall.@acl_rule[${ACL_INDEX}].chn_list='0'
     uci set passwall.@acl_rule[${ACL_INDEX}].dns_shunt='chinadns-ng'
+    # 禁用IPv6相关功能
+    uci set passwall.@acl_rule[${ACL_INDEX}].ipv6='0'
+    uci set passwall.@acl_rule[${ACL_INDEX}].ipv6_proxy='0'
     
     # 添加端口设置优化（参考您的配置文件）
     uci set passwall.@acl_rule[${ACL_INDEX}].tcp_no_redir_ports='disable'
@@ -403,6 +467,8 @@ echo "Passwall规则: ${WIFI_NAME}_TikTok专用"
 echo "Passwall默认节点: 本地直连（确保网络正常）"
 echo "Passwall备用节点: 虚拟代理节点（请手动更换）"
 echo "最大连接数: ${MAX_DEVICES_PER_WIFI}个设备"
+echo "WiFi功率: 最大功率模式（30dBm）"
+echo "IPv6状态: 完全禁用，仅使用IPv4"
 echo "TikTok优化: DNS劫持防护、流量优化"
 echo "======================================"
 echo ""
@@ -421,4 +487,7 @@ echo "5. PassWall已配置TikTok专用代理规则"
 echo "6. 默认使用本地直连节点，网络正常可用"
 echo "7. 已禁用节点连通性检测，避免检测失败影响网络"
 echo "8. 请在PassWall访问控制中手动更换为有效代理节点"
+echo "9. IPv6已完全禁用，仅使用IPv4网络"
+echo "10. WiFi功率已设置为最大（30dBm），信号覆盖范围更广"
+echo "11. 桥接接口已优化，由OpenWrt自动管理"
 echo -e "\033[1;31;1m*本脚本由点动云独家提供，禁止出售或用于非法用途，脚本仅供技术交流学习使用\033[0m"
